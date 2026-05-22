@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Marky">
+  <defs>
+    <linearGradient id="marky-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#marky-gradient)"/>
+  <path d="M11 8h7l5 5v11a1 1 0 0 1-1 1H11a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" fill="none" stroke="#fff" stroke-width="1.75" stroke-linejoin="round"/>
+  <path d="M18 8v5h5" fill="none" stroke="#fff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M12 15h8M12 18.5h6" stroke="#fff" stroke-width="1.75" stroke-linecap="round"/>
+</svg>

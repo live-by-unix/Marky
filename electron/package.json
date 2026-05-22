@@ -1,0 +1,17 @@
+{
+  "name": "marky-desktop",
+  "version": "1.0.0",
+  "description": "Marky Markdown Editor — offline desktop app",
+  "main": "main.js",
+  "author": "Marky",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "sync": "bash scripts/sync-www.sh",
+    "vendor": "bash scripts/vendor-assets.sh",
+    "prepare": "npm run sync && npm run vendor"
+  },
+  "devDependencies": {
+    "electron": "^34.2.0"
+  }
+}

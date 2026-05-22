@@ -1,0 +1,28 @@
+{
+  "id": "./",
+  "name": "Marky Markdown Editor",
+  "short_name": "Marky",
+  "description": "Fast Markdown editor with live preview, syntax highlighting, and auto-save.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8fafc",
+  "theme_color": "#7c3aed",
+  "lang": "en",
+  "categories": ["productivity", "utilities", "writing"],
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

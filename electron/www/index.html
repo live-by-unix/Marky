@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full antialiased">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Marky — offline Markdown editor with live preview.">
+  <meta name="theme-color" content="#7c3aed">
+  <title>Marky — Markdown Editor</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="../vendor/tailwindcss.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+            display: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <link id="hljs-theme-light" rel="stylesheet" href="../vendor/github.min.css">
+  <link id="hljs-theme-dark" rel="stylesheet" href="../vendor/github-dark.min.css" disabled>
+  <script src="../vendor/highlight.min.js"></script>
+  <script src="../vendor/marked.min.js"></script>
+</head>
+<body class="marky-body h-full overflow-hidden bg-slate-50 text-slate-900 transition-colors duration-300 dark:bg-slate-950 dark:text-slate-100">
+  <div class="marky-app flex h-full min-h-0 flex-col">
+    <header class="marky-header shrink-0 border-b border-slate-200/80 bg-white/80 backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/80">
+      <div class="mx-auto flex h-14 max-w-[100vw] items-center justify-between gap-3 px-4 sm:px-6">
+        <div class="flex min-w-0 items-center gap-3">
+          <div class="marky-logo flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 shadow-sm shadow-violet-500/25" aria-hidden="true">
+            <svg class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+          </div>
+          <h1 class="font-display text-lg font-semibold tracking-tight text-slate-900 dark:text-white">Marky</h1>
+          <span class="hidden rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 sm:inline">Desktop</span>
+        </div>
+
+        <div class="flex items-center gap-2 sm:gap-3">
+          <p id="stats" class="hidden font-mono text-xs tabular-nums text-slate-500 dark:text-slate-400 sm:block" aria-live="polite">
+            <span id="word-count">0</span> words · <span id="char-count">0</span> chars
+          </p>
+          <p id="stats-mobile" class="font-mono text-[10px] tabular-nums text-slate-500 dark:text-slate-400 sm:hidden" aria-live="polite">
+            <span id="word-count-mobile">0</span>w · <span id="char-count-mobile">0</span>c
+          </p>
+
+          <div class="marky-toolbar-divider hidden h-6 w-px bg-slate-200 dark:bg-slate-700 sm:block" aria-hidden="true"></div>
+
+          <button type="button" id="theme-toggle" class="marky-btn marky-btn-icon" aria-label="Toggle dark mode" title="Toggle theme">
+            <svg id="icon-sun" class="h-[18px] w-[18px] hidden dark:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/>
+              <line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            <svg id="icon-moon" class="h-[18px] w-[18px] block dark:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </button>
+
+          <button type="button" id="download-btn" class="marky-btn marky-btn-ghost hidden sm:inline-flex" title="Download as Markdown">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span>Export</span>
+          </button>
+
+          <button type="button" id="download-btn-mobile" class="marky-btn marky-btn-icon sm:hidden" aria-label="Download document" title="Download">
+            <svg class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+
+          <button type="button" id="clear-btn" class="marky-btn marky-btn-danger" title="Clear workspace">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            <span class="hidden sm:inline">Clear</span>
+          </button>
+        </div>
+      </div>
+      <div id="save-indicator" class="marky-save-indicator h-0.5 w-full origin-left scale-x-0 bg-gradient-to-r from-violet-500 to-indigo-500 transition-transform duration-500" role="status" aria-label="Saving"></div>
+    </header>
+
+    <main id="workspace" class="marky-main marky-main-split min-h-0 flex-1">
+      <section id="pane-editor" class="marky-pane marky-pane-editor flex min-h-0 min-w-0 flex-col" aria-label="Markdown source">
+        <div class="marky-pane-label flex shrink-0 items-center gap-2 border-b border-slate-100 px-4 py-2 dark:border-slate-800/60">
+          <span class="font-mono text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">Source</span>
+        </div>
+        <div class="marky-editor-wrap relative min-h-0 flex-1">
+          <textarea
+            id="editor"
+            class="marky-editor h-full w-full resize-none bg-transparent font-mono text-[15px] leading-relaxed text-slate-800 placeholder:text-slate-400 focus:outline-none dark:text-slate-200 dark:placeholder:text-slate-600"
+            spellcheck="true"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            placeholder="# Start writing in Markdown…"
+            aria-label="Markdown editor"
+          ></textarea>
+        </div>
+      </section>
+
+      <div
+        id="split-handle"
+        class="marky-split-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-valuemin="20"
+        aria-valuemax="80"
+        aria-valuenow="50"
+        aria-label="Resize source and preview panels"
+        tabindex="0"
+      ></div>
+
+      <section id="pane-preview" class="marky-pane marky-pane-preview flex min-h-0 min-w-0 flex-col" aria-label="Live preview">
+        <div class="marky-pane-label flex shrink-0 items-center gap-2 border-b border-slate-100 px-4 py-2 dark:border-slate-800/60">
+          <span class="font-mono text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">Preview</span>
+          <span id="preview-badge" class="ml-auto rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Live</span>
+        </div>
+        <div id="preview-scroll" class="marky-preview-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <article
+            id="preview"
+            class="marky-preview prose prose-slate max-w-none px-6 py-5 dark:prose-invert prose-headings:font-display prose-headings:tracking-tight prose-a:text-violet-600 prose-a:no-underline hover:prose-a:underline dark:prose-a:text-violet-400 prose-code:rounded prose-code:bg-slate-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:before:content-none prose-code:after:content-none dark:prose-code:bg-slate-800 prose-pre:p-0 prose-pre:bg-transparent"
+          ></article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="marky-footer shrink-0 border-t border-slate-200/80 bg-white/60 px-4 py-1.5 text-center text-[11px] text-slate-400 backdrop-blur-sm dark:border-slate-800/80 dark:bg-slate-900/60 dark:text-slate-500">
+      <span>Offline desktop · saved to <strong class="font-medium text-slate-500 dark:text-slate-400">MarkyDB</strong></span>
+      <span class="mx-1.5 opacity-40" aria-hidden="true">·</span>
+      <span id="last-saved" class="tabular-nums">Ready</span>
+    </footer>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
