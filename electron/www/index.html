@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Marky — offline Markdown editor with live preview.">
+  <meta name="description" content="Marky — a fast, beautiful Markdown editor with live preview and automatic saving.">
   <meta name="theme-color" content="#7c3aed">
   <title>Marky — Markdown Editor</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -15,9 +15,9 @@
       theme: {
         extend: {
           fontFamily: {
-            sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
-            display: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+            display: ['"DM Sans"', 'Inter', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
           },
         },
       },
@@ -44,6 +44,7 @@
           </div>
           <h1 class="font-display text-lg font-semibold tracking-tight text-slate-900 dark:text-white">Marky</h1>
           <span class="hidden rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400 sm:inline">Desktop</span>
+
         </div>
 
         <div class="flex items-center gap-2 sm:gap-3">
@@ -53,6 +54,62 @@
           <p id="stats-mobile" class="font-mono text-[10px] tabular-nums text-slate-500 dark:text-slate-400 sm:hidden" aria-live="polite">
             <span id="word-count-mobile">0</span>w · <span id="char-count-mobile">0</span>c
           </p>
+
+          <div class="marky-toolbar-divider hidden h-6 w-px bg-slate-200 dark:bg-slate-700 sm:block" aria-hidden="true"></div>
+
+          <div class="marky-fs-menu relative">
+            <button
+              type="button"
+              id="fs-menu-btn"
+              class="marky-btn marky-btn-ghost marky-fs-menu-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="fs-menu-panel"
+              title="Open files or folders"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span class="hidden sm:inline">Open</span>
+              <svg class="marky-fs-menu-chevron h-3.5 w-3.5 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+            <div id="fs-menu-panel" class="marky-fs-dropdown" role="menu" hidden>
+              <button type="button" class="marky-fs-dropdown-item" role="menuitem" data-fs-action="file">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                <span>Open file</span>
+              </button>
+              <button type="button" class="marky-fs-dropdown-item" role="menuitem" data-fs-action="folder">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>Open folder</span>
+              </button>
+              <button type="button" class="marky-fs-dropdown-item" role="menuitem" data-fs-action="upload">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>Upload files</span>
+              </button>
+            </div>
+          </div>
+
+          <input type="file" id="upload-files-input" class="marky-upload-input" accept=".md,.markdown,.mdown,.mkd,text/markdown" multiple hidden>
+
+          <button type="button" id="save-file-btn" class="marky-btn marky-btn-primary" title="Save to disk (Ctrl+S)" disabled>
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+              <polyline points="17 21 17 13 7 13 7 21"/>
+              <polyline points="7 3 7 8 15 8"/>
+            </svg>
+            <span>Save</span>
+          </button>
 
           <div class="marky-toolbar-divider hidden h-6 w-px bg-slate-200 dark:bg-slate-700 sm:block" aria-hidden="true"></div>
 
@@ -102,10 +159,37 @@
       <div id="save-indicator" class="marky-save-indicator h-0.5 w-full origin-left scale-x-0 bg-gradient-to-r from-violet-500 to-indigo-500 transition-transform duration-500" role="status" aria-label="Saving"></div>
     </header>
 
-    <main id="workspace" class="marky-main marky-main-split min-h-0 flex-1">
+    <nav id="workspace-tabs" class="marky-workspace-tabs flex shrink-0 gap-1 border-b border-slate-200/80 bg-white/90 px-3 py-2 dark:border-slate-800/80 dark:bg-slate-900/90 lg:hidden" aria-label="Workspace panels">
+      <button type="button" class="marky-tab is-active" data-panel="tree">Files</button>
+      <button type="button" class="marky-tab" data-panel="editor">Source</button>
+      <button type="button" class="marky-tab" data-panel="preview">Preview</button>
+    </nav>
+
+    <main id="workspace" class="marky-main marky-main-split min-h-0 flex-1" data-mobile-panel="tree">
+      <section id="pane-tree" class="marky-pane marky-pane-tree flex min-h-0 min-w-0 flex-col" aria-label="File tree">
+        <div class="marky-pane-label flex shrink-0 items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-800/60">
+          <span class="font-mono text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">Files</span>
+          <span id="workspace-root" class="ml-auto truncate font-mono text-[10px] text-slate-400 dark:text-slate-500" title=""></span>
+        </div>
+        <div id="file-tree-scroll" class="marky-file-tree-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <p id="file-tree-empty" class="marky-file-tree-empty px-4 py-6 text-center text-sm text-slate-400 dark:text-slate-500">Use <strong class="font-medium text-slate-500 dark:text-slate-400">Open</strong> in the toolbar to add files or folders.</p>
+          <div id="file-tree" class="marky-file-tree"></div>
+        </div>
+      </section>
+
+      <div
+        id="split-handle-tree"
+        class="marky-split-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize file tree"
+        tabindex="0"
+      ></div>
+
       <section id="pane-editor" class="marky-pane marky-pane-editor flex min-h-0 min-w-0 flex-col" aria-label="Markdown source">
         <div class="marky-pane-label flex shrink-0 items-center gap-2 border-b border-slate-100 px-4 py-2 dark:border-slate-800/60">
           <span class="font-mono text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">Source</span>
+          <span id="active-file-label" class="ml-auto truncate font-mono text-[10px] text-violet-600 dark:text-violet-400"></span>
         </div>
         <div class="marky-editor-wrap relative min-h-0 flex-1">
           <textarea
@@ -122,13 +206,10 @@
       </section>
 
       <div
-        id="split-handle"
+        id="split-handle-editor"
         class="marky-split-handle"
         role="separator"
         aria-orientation="vertical"
-        aria-valuemin="20"
-        aria-valuemax="80"
-        aria-valuenow="50"
         aria-label="Resize source and preview panels"
         tabindex="0"
       ></div>
@@ -148,7 +229,7 @@
     </main>
 
     <footer class="marky-footer shrink-0 border-t border-slate-200/80 bg-white/60 px-4 py-1.5 text-center text-[11px] text-slate-400 backdrop-blur-sm dark:border-slate-800/80 dark:bg-slate-900/60 dark:text-slate-500">
-      <span>Offline desktop · saved to <strong class="font-medium text-slate-500 dark:text-slate-400">MarkyDB</strong></span>
+      <span id="footer-mode">Auto-saved to <strong class="font-medium text-slate-500 dark:text-slate-400">MarkyDB</strong></span>
       <span class="mx-1.5 opacity-40" aria-hidden="true">·</span>
       <span id="last-saved" class="tabular-nums">Ready</span>
     </footer>

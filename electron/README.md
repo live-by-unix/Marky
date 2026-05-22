@@ -16,9 +16,9 @@ npm install
 npm run prepare
 ```
 
-`prepare` syncs `app.js`, `style.css`, and `favicon.svg` from the project root into `www/`, and downloads vendor libraries into `vendor/`.
+`prepare` syncs the web app from the project root into `www/` (including `index.html` with offline asset paths) and downloads vendor libraries into `vendor/`.
 
-After changing the web app at the repo root, re-sync:
+After **any** change to the root web app (`index.html`, `app.js`, `style.css`, `filesystem.js`), re-sync before running or packaging Electron:
 
 ```bash
 npm run sync

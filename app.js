@@ -1,18 +1,30 @@
+import {
+  hasDiskAccess,
+  pickMarkdownFile,
+  pickMarkdownFolder,
+  pickUploadFilesElectron,
+  ingestUploadedFiles,
+  loadFileContent,
+  saveFileToDisk,
+} from './filesystem.js';
+
 const DB_NAME = 'MarkyDB';
 const DB_VERSION = 1;
 const STORE_DOCUMENT = 'document';
 const STORE_PREFERENCES = 'preferences';
 const DOCUMENT_KEY = 'workspace';
 const THEME_KEY = 'theme';
-const SPLIT_KEY = 'splitRatio';
+const SPLIT_LAYOUT_KEY = 'splitLayout';
 const SAVE_DEBOUNCE_MS = 280;
+const DISK_SAVE_DEBOUNCE_MS = 400;
 const SPLIT_DEBOUNCE_MS = 120;
-const SPLIT_DEFAULT = 50;
-const SPLIT_MIN = 20;
-const SPLIT_MAX = 80;
 const SPLIT_STEP = 2;
-const DESKTOP_SPLIT_QUERY = '(min-width: 1024px)';
+const MIN_PANEL_PCT = 15;
+const HANDLE_PX = 10;
+const DESKTOP_LAYOUT_QUERY = '(min-width: 1024px)';
 const DOWNLOAD_FILENAME = 'marky-document.md';
+
+const LAYOUT_DEFAULT = { tree: 30, source: 35, preview: 35 };
 
 const DEFAULT_MARKDOWN = `# Welcome to Marky
 
@@ -21,15 +33,16 @@ A **fast**, _beautiful_ Markdown editor with live preview.
 ## Features
 
 - Split-screen editing and preview
+- Open files and folders from disk
+- Save changes back to your markdown files
 - Auto-save on every keystroke
 - Light and dark themes
-- Export to \`.md\` files
 
 ## Try it
 
-1. Edit this text on the left
-2. Watch the preview update instantly
-3. Toggle the theme in the header
+1. Click **Folder** or **File** in the toolbar
+2. Select a markdown file from the tree
+3. Edit and press **Save** or \`Ctrl+S\`
 
 \`\`\`javascript
 const greeting = 'Hello, Marky!';
@@ -47,23 +60,48 @@ const elements = {
   clearBtn: document.getElementById('clear-btn'),
   downloadBtn: document.getElementById('download-btn'),
   downloadBtnMobile: document.getElementById('download-btn-mobile'),
+  fsMenuBtn: document.getElementById('fs-menu-btn'),
+  fsMenuPanel: document.getElementById('fs-menu-panel'),
+  uploadFilesInput: document.getElementById('upload-files-input'),
+  saveFileBtn: document.getElementById('save-file-btn'),
   wordCount: document.getElementById('word-count'),
   charCount: document.getElementById('char-count'),
   wordCountMobile: document.getElementById('word-count-mobile'),
   charCountMobile: document.getElementById('char-count-mobile'),
   saveIndicator: document.getElementById('save-indicator'),
   lastSaved: document.getElementById('last-saved'),
+  footerMode: document.getElementById('footer-mode'),
   workspace: document.getElementById('workspace'),
-  splitHandle: document.getElementById('split-handle'),
+  splitHandleTree: document.getElementById('split-handle-tree'),
+  splitHandleEditor: document.getElementById('split-handle-editor'),
+  fileTree: document.getElementById('file-tree'),
+  fileTreeEmpty: document.getElementById('file-tree-empty'),
+  workspaceRoot: document.getElementById('workspace-root'),
+  activeFileLabel: document.getElementById('active-file-label'),
+  workspaceTabs: document.getElementById('workspace-tabs'),
+};
+
+const fileState = {
+  mode: null,
+  rootName: '',
+  rootHandle: null,
+  rootPath: null,
+  tree: [],
+  openFiles: new Map(),
+  activePath: null,
 };
 
 let dbPromise = null;
 let saveTimer = null;
+let diskSaveTimer = null;
 let saveIndicatorTimer = null;
 let splitSaveTimer = null;
 let isReady = false;
-let splitPercent = SPLIT_DEFAULT;
+let layout = { ...LAYOUT_DEFAULT };
+let activeSplitHandle = null;
 let isSplitDragging = false;
+let editorDirty = false;
+let savedSnapshot = '';
 
 function openDatabase() {
   if (dbPromise) return dbPromise;
@@ -237,13 +275,10 @@ function sanitizeHtml(html) {
 
 function detectCodeLanguage(codeElement) {
   const className = codeElement.className || '';
-
   const languageMatch = className.match(/(?:^|\s)language-([\w+#.-]+)/i);
   if (languageMatch) return languageMatch[1];
-
   const hljsMatch = className.match(/(?:^|\s)hljs(?:\s+language-([\w+#.-]+))?/i);
   if (hljsMatch && hljsMatch[1]) return hljsMatch[1];
-
   return 'plaintext';
 }
 
@@ -419,6 +454,30 @@ function formatSavedTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function updateFooterStatus(message) {
+  elements.lastSaved.textContent = message;
+}
+
+function updateSaveButtonState() {
+  const canSave = Boolean(fileState.activePath);
+  elements.saveFileBtn.disabled = !canSave;
+}
+
+function updateActiveFileUi() {
+  const name = fileState.activePath ? fileState.activePath.split('/').pop() : '';
+  elements.activeFileLabel.textContent = editorDirty && name ? `${name} •` : name;
+  elements.workspaceRoot.textContent = fileState.rootName || '';
+  elements.workspaceRoot.title = fileState.rootPath || fileState.rootName || '';
+
+  if (fileState.activePath) {
+    elements.footerMode.innerHTML = `Editing <strong class="font-medium text-slate-500 dark:text-slate-400">${escapeHtml(name)}</strong>`;
+  } else {
+    elements.footerMode.innerHTML = 'Auto-saved to <strong class="font-medium text-slate-500 dark:text-slate-400">MarkyDB</strong>';
+  }
+
+  updateSaveButtonState();
+}
+
 function persistDocument(text) {
   flashSaveIndicator('saving');
 
@@ -427,7 +486,9 @@ function persistDocument(text) {
     updatedAt: Date.now(),
   }).then(() => {
     flashSaveIndicator('saved');
-    elements.lastSaved.textContent = `Saved ${formatSavedTime(new Date())}`;
+    if (!fileState.activePath) {
+      updateFooterStatus(`Saved ${formatSavedTime(new Date())}`);
+    }
   });
 }
 
@@ -438,8 +499,21 @@ function scheduleSave(text) {
   }, SAVE_DEBOUNCE_MS);
 }
 
+function scheduleDiskSave() {
+  if (!fileState.activePath) return;
+
+  clearTimeout(diskSaveTimer);
+  diskSaveTimer = setTimeout(() => {
+    saveToDisk().catch(() => {
+      updateFooterStatus('Disk save failed');
+    });
+  }, DISK_SAVE_DEBOUNCE_MS);
+}
+
 function handlePersistenceError() {
-  elements.lastSaved.textContent = 'Save unavailable';
+  if (!fileState.activePath) {
+    updateFooterStatus('Save unavailable');
+  }
   flashSaveIndicator(null);
 }
 
@@ -452,23 +526,352 @@ function loadDocument() {
   });
 }
 
+function setEditorContent(text, options = {}) {
+  const { markSaved = true, render = true } = options;
+  elements.editor.value = text;
+  savedSnapshot = text;
+  editorDirty = false;
+
+  if (render) {
+    renderPreview(text);
+    updateStats(text);
+  }
+
+  updateActiveFileUi();
+}
+
+function markEditorDirty() {
+  const text = elements.editor.value;
+  editorDirty = text !== savedSnapshot;
+
+  if (fileState.activePath) {
+    const entry = fileState.openFiles.get(fileState.activePath);
+    if (entry) {
+      entry.dirty = editorDirty;
+      entry.content = text;
+    }
+    renderFileTree();
+  }
+
+  updateActiveFileUi();
+}
+
 function handleInput() {
   const text = elements.editor.value;
   renderPreview(text);
   updateStats(text);
+  markEditorDirty();
 
   if (!isReady) return;
 
   scheduleSave(text);
+  scheduleDiskSave();
+}
+
+async function confirmDiscardChanges() {
+  if (!editorDirty) return true;
+  return window.confirm('Discard unsaved changes?');
+}
+
+async function saveToDisk() {
+  if (!fileState.activePath) {
+    window.alert('Open a markdown file to save to disk.');
+    return;
+  }
+
+  const text = elements.editor.value;
+  const entry = fileState.openFiles.get(fileState.activePath);
+
+  if (!entry) {
+    window.alert('Unable to resolve the active file.');
+    return;
+  }
+
+  flashSaveIndicator('saving');
+  entry.content = text;
+
+  const previousPath = fileState.activePath;
+
+  await saveFileToDisk(entry, text, fileState);
+
+  if (entry.path !== previousPath) {
+    fileState.openFiles.delete(previousPath);
+    fileState.openFiles.set(entry.path, entry);
+    fileState.activePath = entry.path;
+    updateTreeFilePath(previousPath, entry.path, entry.name);
+  }
+
+  savedSnapshot = text;
+  editorDirty = false;
+  entry.dirty = false;
+
+  flashSaveIndicator('saved');
+  updateFooterStatus(`Saved to disk ${formatSavedTime(new Date())}`);
+  renderFileTree();
+  updateActiveFileUi();
+}
+
+async function selectTreeFile(node) {
+  if (node.type !== 'file') return;
+
+  if (fileState.activePath === node.path) return;
+
+  const canContinue = await confirmDiscardChanges();
+  if (!canContinue) return;
+
+  let fileEntry = fileState.openFiles.get(node.path);
+
+  if (!fileEntry) {
+    fileEntry = await loadFileContent(node, fileState);
+  }
+
+  fileState.openFiles.set(node.path, fileEntry);
+
+  fileState.activePath = node.path;
+  setEditorContent(fileEntry.content);
+  renderFileTree();
+  elements.editor.focus();
+  setMobilePanel('editor');
+}
+
+function toggleFolder(node, listItem) {
+  node.expanded = !node.expanded;
+  const childList = listItem.querySelector(':scope > .marky-tree-children');
+  if (childList) {
+    childList.hidden = !node.expanded;
+  }
+  const chevron = listItem.querySelector(':scope > .marky-tree-row .marky-tree-chevron');
+  if (chevron) {
+    chevron.classList.toggle('is-expanded', node.expanded);
+  }
+}
+
+function createTreeRow(node) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'marky-tree-row';
+  row.title = node.path;
+
+  if (node.type === 'directory') {
+    row.classList.add('marky-tree-folder');
+    row.innerHTML = `<span class="marky-tree-chevron${node.expanded ? ' is-expanded' : ''}" aria-hidden="true"></span><span class="marky-tree-icon marky-tree-icon-folder" aria-hidden="true"></span><span class="marky-tree-name">${escapeHtml(node.name)}</span>`;
+    return row;
+  }
+
+  row.classList.add('marky-tree-file');
+  if (node.path === fileState.activePath) {
+    row.classList.add('is-active');
+  }
+
+  const entry = fileState.openFiles.get(node.path);
+  if (entry?.dirty) {
+    row.classList.add('is-dirty');
+  }
+
+  row.innerHTML = `<span class="marky-tree-chevron marky-tree-chevron-placeholder" aria-hidden="true"></span><span class="marky-tree-icon marky-tree-icon-file" aria-hidden="true"></span><span class="marky-tree-name">${escapeHtml(node.name)}</span>`;
+  row.addEventListener('click', () => selectTreeFile(node));
+  return row;
+}
+
+function renderTreeNode(node) {
+  const item = document.createElement('li');
+  item.className = 'marky-tree-item';
+
+  const row = createTreeRow(node);
+  item.appendChild(row);
+
+  if (node.type === 'directory' && node.children?.length) {
+    const childList = document.createElement('ul');
+    childList.className = 'marky-tree-children';
+    childList.hidden = !node.expanded;
+    node.children.forEach((child) => childList.appendChild(renderTreeNode(child)));
+    item.appendChild(childList);
+
+    row.addEventListener('click', () => toggleFolder(node, item));
+  }
+
+  return item;
+}
+
+function renderFileTree() {
+  elements.fileTree.innerHTML = '';
+
+  if (!fileState.tree.length) {
+    elements.fileTreeEmpty.classList.remove('hidden');
+    return;
+  }
+
+  elements.fileTreeEmpty.classList.add('hidden');
+
+  const list = document.createElement('ul');
+  list.className = 'marky-tree-root';
+  fileState.tree.forEach((node) => list.appendChild(renderTreeNode(node)));
+  elements.fileTree.appendChild(list);
+}
+
+function populateOpenFiles(context) {
+  const map = new Map();
+
+  if (context.files?.length) {
+    context.files.forEach((file) => map.set(file.path, file));
+  }
+
+  if (context.file) {
+    map.set(context.file.path, context.file);
+  }
+
+  return map;
+}
+
+function applyWorkspaceContext(context) {
+  fileState.mode = context.mode;
+  fileState.rootName = context.rootName || '';
+  fileState.rootHandle = context.rootHandle || null;
+  fileState.rootPath = context.rootPath || null;
+  fileState.tree = context.tree || [];
+  fileState.openFiles = populateOpenFiles(context);
+
+  if (context.file) {
+    fileState.activePath = context.file.path;
+    setEditorContent(context.file.content);
+  } else if (context.firstPath && fileState.openFiles.has(context.firstPath)) {
+    fileState.activePath = context.firstPath;
+    setEditorContent(fileState.openFiles.get(context.firstPath).content);
+  } else {
+    fileState.activePath = null;
+  }
+
+  renderFileTree();
+  updateActiveFileUi();
+}
+
+async function applyUploadContext(context) {
+  applyWorkspaceContext(context);
+  setMobilePanel('tree');
+  elements.editor.focus();
+}
+
+function updateTreeFilePath(oldPath, newPath, newName) {
+  const visit = (nodes) => {
+    nodes.forEach((node) => {
+      if (node.type === 'file' && node.path === oldPath) {
+        node.path = newPath;
+        node.name = newName;
+      }
+      if (node.children?.length) visit(node.children);
+    });
+  };
+  visit(fileState.tree);
+}
+
+async function handleUploadFiles(fileList) {
+  if (!fileList?.length) return;
+
+  try {
+    const canContinue = await confirmDiscardChanges();
+    if (!canContinue) return;
+
+    const context = await ingestUploadedFiles(fileList);
+    await applyUploadContext(context);
+  } catch (error) {
+    if (error?.message !== 'No markdown files selected') {
+      window.alert('Could not load the uploaded files.');
+    }
+  }
+}
+
+async function handleUploadClick() {
+  try {
+    const electronContext = await pickUploadFilesElectron();
+    if (electronContext) {
+      const canContinue = await confirmDiscardChanges();
+      if (!canContinue) return;
+      await applyUploadContext(electronContext);
+      return;
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      window.alert('Could not upload files.');
+    }
+    return;
+  }
+
+  elements.uploadFilesInput.click();
+}
+
+function handleUploadInputChange(event) {
+  const fileList = event.target.files;
+  handleUploadFiles(fileList).finally(() => {
+    event.target.value = '';
+  });
+}
+
+async function handleOpenFile() {
+  if (!hasDiskAccess()) {
+    window.alert('Your browser does not support opening files from disk. Use Chrome, Edge, or the Marky desktop app.');
+    return;
+  }
+
+  try {
+    const canContinue = await confirmDiscardChanges();
+    if (!canContinue) return;
+
+    const context = await pickMarkdownFile();
+    if (!context) return;
+
+    applyWorkspaceContext(context);
+
+    if (context.file) {
+      setMobilePanel('editor');
+      elements.editor.focus();
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      window.alert('Could not open the file.');
+    }
+  }
+}
+
+async function handleOpenFolder() {
+  if (!hasDiskAccess()) {
+    window.alert('Your browser does not support opening folders from disk. Use Chrome, Edge, or the Marky desktop app.');
+    return;
+  }
+
+  try {
+    const canContinue = await confirmDiscardChanges();
+    if (!canContinue) return;
+
+    const context = await pickMarkdownFolder();
+    if (!context) return;
+
+    applyWorkspaceContext(context);
+    setMobilePanel('tree');
+
+    if (fileState.tree.length === 1 && fileState.tree[0].type === 'file') {
+      await selectTreeFile(fileState.tree[0]);
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      window.alert('Could not open the folder.');
+    }
+  }
 }
 
 function clearWorkspace() {
   const confirmed = window.confirm('Clear the entire workspace? This cannot be undone.');
   if (!confirmed) return;
 
-  elements.editor.value = '';
-  renderPreview('');
-  updateStats('');
+  fileState.mode = null;
+  fileState.rootName = '';
+  fileState.rootHandle = null;
+  fileState.rootPath = null;
+  fileState.tree = [];
+  fileState.openFiles = new Map();
+  fileState.activePath = null;
+
+  setEditorContent('');
+  renderFileTree();
   flashSaveIndicator('saving');
 
   deleteValue(STORE_DOCUMENT, DOCUMENT_KEY)
@@ -479,69 +882,115 @@ function clearWorkspace() {
     .catch(handlePersistenceError);
 }
 
-function clampSplit(value) {
-  return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, value));
+function normalizeLayout() {
+  const sum = layout.tree + layout.source + layout.preview;
+  if (sum <= 0) {
+    layout = { ...LAYOUT_DEFAULT };
+    return;
+  }
+
+  layout.tree = (layout.tree / sum) * 100;
+  layout.source = (layout.source / sum) * 100;
+  layout.preview = (layout.preview / sum) * 100;
+
+  layout.tree = Math.max(MIN_PANEL_PCT, layout.tree);
+  layout.source = Math.max(MIN_PANEL_PCT, layout.source);
+  layout.preview = Math.max(MIN_PANEL_PCT, layout.preview);
+
+  const total = layout.tree + layout.source + layout.preview;
+  layout.tree = (layout.tree / total) * 100;
+  layout.source = (layout.source / total) * 100;
+  layout.preview = (layout.preview / total) * 100;
 }
 
-function isDesktopSplit() {
-  return window.matchMedia(DESKTOP_SPLIT_QUERY).matches;
+function isDesktopLayout() {
+  return window.matchMedia(DESKTOP_LAYOUT_QUERY).matches;
 }
 
-function updateSplitAriaOrientation() {
-  elements.splitHandle.setAttribute('aria-orientation', isDesktopSplit() ? 'vertical' : 'horizontal');
-}
+function applyLayoutGrid() {
+  normalizeLayout();
 
-function applySplitGrid() {
-  const editorFr = splitPercent;
-  const previewFr = 100 - splitPercent;
-  const handleTrack = '10px';
+  const treeFr = layout.tree;
+  const sourceFr = layout.source;
+  const previewFr = layout.preview;
+  const handleTrack = `${HANDLE_PX}px`;
 
-  if (isDesktopSplit()) {
-    elements.workspace.style.gridTemplateColumns = `minmax(10rem, ${editorFr}fr) ${handleTrack} minmax(10rem, ${previewFr}fr)`;
+  if (isDesktopLayout()) {
+    elements.workspace.style.gridTemplateColumns = `minmax(8rem, ${treeFr}fr) ${handleTrack} minmax(8rem, ${sourceFr}fr) ${handleTrack} minmax(8rem, ${previewFr}fr)`;
     elements.workspace.style.gridTemplateRows = 'minmax(0, 1fr)';
   } else {
     elements.workspace.style.gridTemplateColumns = 'minmax(0, 1fr)';
-    elements.workspace.style.gridTemplateRows = `minmax(8rem, ${editorFr}fr) ${handleTrack} minmax(8rem, ${previewFr}fr)`;
+    elements.workspace.style.gridTemplateRows = '';
   }
 }
 
-function applySplit(percent) {
-  splitPercent = clampSplit(percent);
-  applySplitGrid();
-  elements.splitHandle.setAttribute('aria-valuenow', String(Math.round(splitPercent)));
+function applyLayout(nextLayout) {
+  layout = { ...nextLayout };
+  applyLayoutGrid();
 }
 
-function scheduleSplitSave() {
+function scheduleLayoutSave() {
   clearTimeout(splitSaveTimer);
   splitSaveTimer = setTimeout(() => {
-    putValue(STORE_PREFERENCES, SPLIT_KEY, splitPercent).catch(() => {});
+    putValue(STORE_PREFERENCES, SPLIT_LAYOUT_KEY, layout).catch(() => {});
   }, SPLIT_DEBOUNCE_MS);
 }
 
-function loadSplit() {
-  return getValue(STORE_PREFERENCES, SPLIT_KEY).then((stored) => {
-    if (typeof stored === 'number' && stored >= SPLIT_MIN && stored <= SPLIT_MAX) {
-      applySplit(stored);
+function loadLayout() {
+  return getValue(STORE_PREFERENCES, SPLIT_LAYOUT_KEY).then((stored) => {
+    if (stored && typeof stored.tree === 'number' && typeof stored.source === 'number' && typeof stored.preview === 'number') {
+      applyLayout(stored);
       return;
     }
-    applySplit(SPLIT_DEFAULT);
+    applyLayout(LAYOUT_DEFAULT);
   });
 }
 
-function splitPercentFromPointer(clientX, clientY) {
+function getWorkspaceMetrics() {
   const rect = elements.workspace.getBoundingClientRect();
+  const available = rect.width - HANDLE_PX * 2;
+  return { rect, available };
+}
 
-  if (isDesktopSplit()) {
-    return ((clientX - rect.left) / rect.width) * 100;
-  }
+function layoutFromTreeSplit(clientX) {
+  const { rect, available } = getWorkspaceMetrics();
+  const treePx = Math.min(Math.max(clientX - rect.left - HANDLE_PX / 2, available * (MIN_PANEL_PCT / 100)), available * (1 - (MIN_PANEL_PCT * 2) / 100));
+  const restPx = available - treePx;
+  const sourceShare = layout.source / (layout.source + layout.preview);
+  const sourcePx = restPx * sourceShare;
+  const previewPx = restPx - sourcePx;
 
-  return ((clientY - rect.top) / rect.height) * 100;
+  return {
+    tree: (treePx / available) * 100,
+    source: (sourcePx / available) * 100,
+    preview: (previewPx / available) * 100,
+  };
+}
+
+function layoutFromEditorSplit(clientX) {
+  const { rect, available } = getWorkspaceMetrics();
+  const treePx = (layout.tree / 100) * available;
+  const pointerPx = clientX - rect.left - treePx - HANDLE_PX * 1.5;
+  const restPx = available - treePx;
+  const sourcePx = Math.min(Math.max(pointerPx, restPx * (MIN_PANEL_PCT / 100)), restPx * (1 - MIN_PANEL_PCT / 100));
+  const previewPx = restPx - sourcePx;
+
+  return {
+    tree: layout.tree,
+    source: (sourcePx / available) * 100,
+    preview: (previewPx / available) * 100,
+  };
 }
 
 function onDocumentSplitMove(event) {
-  if (!isSplitDragging) return;
+  if (!isSplitDragging || !activeSplitHandle) return;
 
-  applySplit(splitPercentFromPointer(event.clientX, event.clientY));
+  if (activeSplitHandle === 'tree') {
+    applyLayout(layoutFromTreeSplit(event.clientX));
+  } else {
+    applyLayout(layoutFromEditorSplit(event.clientX));
+  }
+
   event.preventDefault();
 }
 
@@ -549,6 +998,7 @@ function onDocumentSplitEnd(event) {
   if (!isSplitDragging) return;
 
   isSplitDragging = false;
+  activeSplitHandle = null;
   elements.workspace.classList.remove('is-resizing');
   document.body.classList.remove('marky-split-active');
 
@@ -556,21 +1006,28 @@ function onDocumentSplitEnd(event) {
   document.removeEventListener('pointerup', onDocumentSplitEnd);
   document.removeEventListener('pointercancel', onDocumentSplitEnd);
 
-  if (elements.splitHandle.hasPointerCapture(event.pointerId)) {
-    elements.splitHandle.releasePointerCapture(event.pointerId);
+  const handleEl = event.target.closest?.('.marky-split-handle');
+  if (handleEl?.hasPointerCapture?.(event.pointerId)) {
+    handleEl.releasePointerCapture(event.pointerId);
   }
 
-  scheduleSplitSave();
+  scheduleLayoutSave();
 }
 
-function beginSplitDrag(event) {
-  if (event.button !== 0) return;
+function beginSplitDrag(handleName, event) {
+  if (event.button !== 0 || !isDesktopLayout()) return;
 
   isSplitDragging = true;
+  activeSplitHandle = handleName;
   elements.workspace.classList.add('is-resizing');
   document.body.classList.add('marky-split-active');
-  elements.splitHandle.setPointerCapture(event.pointerId);
-  applySplit(splitPercentFromPointer(event.clientX, event.clientY));
+  event.currentTarget.setPointerCapture(event.pointerId);
+
+  if (handleName === 'tree') {
+    applyLayout(layoutFromTreeSplit(event.clientX));
+  } else {
+    applyLayout(layoutFromEditorSplit(event.clientX));
+  }
 
   document.addEventListener('pointermove', onDocumentSplitMove);
   document.addEventListener('pointerup', onDocumentSplitEnd);
@@ -579,52 +1036,43 @@ function beginSplitDrag(event) {
   event.preventDefault();
 }
 
-function adjustSplitByKeyboard(delta) {
-  applySplit(splitPercent + delta);
-  scheduleSplitSave();
+function bindSplitEvents() {
+  elements.splitHandleTree.addEventListener('pointerdown', (event) => beginSplitDrag('tree', event));
+  elements.splitHandleEditor.addEventListener('pointerdown', (event) => beginSplitDrag('editor', event));
+
+  elements.splitHandleTree.addEventListener('dblclick', () => {
+    applyLayout(LAYOUT_DEFAULT);
+    scheduleLayoutSave();
+  });
+
+  elements.splitHandleEditor.addEventListener('dblclick', () => {
+    applyLayout({ tree: layout.tree, source: 35, preview: 35 });
+    normalizeLayout();
+    applyLayoutGrid();
+    scheduleLayoutSave();
+  });
+
+  window.matchMedia(DESKTOP_LAYOUT_QUERY).addEventListener('change', applyLayoutGrid);
+  window.addEventListener('resize', () => {
+    if (!isSplitDragging) applyLayoutGrid();
+  });
 }
 
-function bindSplitEvents() {
-  updateSplitAriaOrientation();
+function setMobilePanel(panelName) {
+  elements.workspace.dataset.mobilePanel = panelName;
 
-  elements.splitHandle.addEventListener('pointerdown', beginSplitDrag);
+  if (!elements.workspaceTabs) return;
 
-  elements.splitHandle.addEventListener('dblclick', () => {
-    applySplit(SPLIT_DEFAULT);
-    scheduleSplitSave();
+  elements.workspaceTabs.querySelectorAll('.marky-tab').forEach((tab) => {
+    tab.classList.toggle('is-active', tab.dataset.panel === panelName);
   });
+}
 
-  elements.splitHandle.addEventListener('keydown', (event) => {
-    const vertical = isDesktopSplit();
-    const decreaseKeys = vertical ? ['ArrowLeft', 'ArrowUp'] : ['ArrowUp', 'ArrowLeft'];
-    const increaseKeys = vertical ? ['ArrowRight', 'ArrowDown'] : ['ArrowDown', 'ArrowRight'];
+function bindMobileTabs() {
+  if (!elements.workspaceTabs) return;
 
-    if (decreaseKeys.includes(event.key)) {
-      event.preventDefault();
-      adjustSplitByKeyboard(-SPLIT_STEP);
-    } else if (increaseKeys.includes(event.key)) {
-      event.preventDefault();
-      adjustSplitByKeyboard(SPLIT_STEP);
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      applySplit(SPLIT_MIN);
-      scheduleSplitSave();
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      applySplit(SPLIT_MAX);
-      scheduleSplitSave();
-    }
-  });
-
-  window.matchMedia(DESKTOP_SPLIT_QUERY).addEventListener('change', () => {
-    updateSplitAriaOrientation();
-    applySplitGrid();
-  });
-
-  window.addEventListener('resize', () => {
-    if (!isSplitDragging) {
-      applySplitGrid();
-    }
+  elements.workspaceTabs.querySelectorAll('.marky-tab').forEach((tab) => {
+    tab.addEventListener('click', () => setMobilePanel(tab.dataset.panel));
   });
 }
 
@@ -633,9 +1081,10 @@ function downloadDocument() {
   const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
+  const filename = fileState.activePath ? fileState.activePath.split('/').pop() : DOWNLOAD_FILENAME;
 
   anchor.href = url;
-  anchor.download = DOWNLOAD_FILENAME;
+  anchor.download = filename;
   anchor.style.display = 'none';
   document.body.appendChild(anchor);
   anchor.click();
@@ -643,6 +1092,63 @@ function downloadDocument() {
   requestAnimationFrame(() => {
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
+  });
+}
+
+function setFsMenuOpen(isOpen) {
+  elements.fsMenuPanel.hidden = !isOpen;
+  elements.fsMenuBtn.setAttribute('aria-expanded', String(isOpen));
+  elements.fsMenuBtn.classList.toggle('is-open', isOpen);
+}
+
+function closeFsMenu() {
+  setFsMenuOpen(false);
+}
+
+function toggleFsMenu() {
+  setFsMenuOpen(elements.fsMenuPanel.hidden);
+}
+
+async function handleFsMenuAction(action) {
+  closeFsMenu();
+
+  if (action === 'file') {
+    await handleOpenFile();
+    return;
+  }
+
+  if (action === 'folder') {
+    await handleOpenFolder();
+    return;
+  }
+
+  if (action === 'upload') {
+    await handleUploadClick();
+  }
+}
+
+function bindFsMenu() {
+  elements.fsMenuBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    toggleFsMenu();
+  });
+
+  elements.fsMenuPanel.querySelectorAll('[data-fs-action]').forEach((item) => {
+    item.addEventListener('click', () => {
+      handleFsMenuAction(item.dataset.fsAction);
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!elements.fsMenuBtn.contains(event.target) && !elements.fsMenuPanel.contains(event.target)) {
+      closeFsMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeFsMenu();
+    }
   });
 }
 
@@ -656,6 +1162,18 @@ function bindEvents() {
   elements.clearBtn.addEventListener('click', clearWorkspace);
   elements.downloadBtn.addEventListener('click', downloadDocument);
   elements.downloadBtnMobile.addEventListener('click', downloadDocument);
+  bindFsMenu();
+  elements.uploadFilesInput.addEventListener('change', handleUploadInputChange);
+  elements.saveFileBtn.addEventListener('click', () => saveToDisk().catch(() => window.alert('Save failed.')));
+
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (!elements.saveFileBtn.disabled) {
+        saveToDisk().catch(() => window.alert('Save failed.'));
+      }
+    }
+  });
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (event) => {
     getValue(STORE_PREFERENCES, THEME_KEY).then((stored) => {
@@ -667,12 +1185,10 @@ function bindEvents() {
 }
 
 function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
+  if (!('serviceWorker' in navigator) || window.markyDesktop?.isElectron) return;
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('./sw.js', { scope: './' })
-      .catch(() => {});
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
   });
 }
 
@@ -680,23 +1196,21 @@ function initialize() {
   configureMarked();
   bindEvents();
   bindSplitEvents();
+  bindMobileTabs();
   registerServiceWorker();
-  applySplit(SPLIT_DEFAULT);
+  applyLayout(LAYOUT_DEFAULT);
+  updateSaveButtonState();
 
-  Promise.all([loadTheme(), loadDocument(), loadSplit()])
+  Promise.all([loadTheme(), loadDocument(), loadLayout()])
     .then(([, content]) => {
-      elements.editor.value = content;
-      renderPreview(content);
-      updateStats(content);
+      setEditorContent(content);
       isReady = true;
-      elements.lastSaved.textContent = 'All changes saved';
+      updateFooterStatus('All changes saved');
     })
     .catch(() => {
-      elements.editor.value = DEFAULT_MARKDOWN;
-      renderPreview(DEFAULT_MARKDOWN);
-      updateStats(DEFAULT_MARKDOWN);
+      setEditorContent(DEFAULT_MARKDOWN);
       isReady = true;
-      elements.lastSaved.textContent = 'Offline mode';
+      updateFooterStatus('Offline mode');
       applyTheme(getActiveTheme());
     });
 }
